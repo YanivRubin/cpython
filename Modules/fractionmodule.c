@@ -11,11 +11,18 @@
 #define FRACTION_SUCCESS (1)
 #define FRACTION_FAILURE (0)
 
+#define TO_STRING_METHOD_REPR (0)
+#define TO_STRING_METHOD_STR (1)
+
+#define FracObject_Check(tested_object, frac_instance) (Py_IS_TYPE(tested_object, Py_TYPE(frac_instance)))
+
 // #define PRINTF(FORMAT, ...) printf(FORMAT "\n", ##__VA_ARGS__)
 #define PRINTF(FORMAT, ...)
 
 #define PY_SSIZE_T_CLEAN
+// mkdir /tmp/bababa111;touch /tmp/bababa111/pyconfig-x86_64.h
 #include "Python.h"
+#include "longobject.h"
 
 // Module state
 typedef struct {
@@ -198,13 +205,19 @@ static void FracObject_dealloc(PyObject *self)
     Py_DECREF(tp);
 }
 
-static PyObject *FracObject_to_string(PyObject *inp) {
+static PyObject *FracObject_to_string(PyObject *inp, char method) {
     FracObject *frac = (FracObject *)inp;
     _PyUnicodeWriter writer;
-    PyObject *s;
+    PyObject *s = NULL;
 
     _PyUnicodeWriter_Init(&writer);
     writer.overallocate = 1;
+
+    if (TO_STRING_METHOD_REPR == method) {
+        if (_PyUnicodeWriter_WriteASCIIString(&writer, "Frac(", 5) < 0) {
+            goto Error;
+        }
+    }
 
     s = PyObject_Repr(frac->numerator);
     ON_NULL_GOTO_ERROR(s);
@@ -213,30 +226,172 @@ static PyObject *FracObject_to_string(PyObject *inp) {
         goto Error;
     }
     Py_DECREF(s);
+    s = NULL;
 
-    if (_PyUnicodeWriter_WriteChar(&writer, '/') < 0) {
-        goto Error;
+    if (TO_STRING_METHOD_REPR == method) {
+        if (_PyUnicodeWriter_WriteASCIIString(&writer, ", ", 2) < 0) {
+            goto Error;
+        }
+    }
+    else if (TO_STRING_METHOD_STR == method) {
+        if (_PyUnicodeWriter_WriteChar(&writer, '/') < 0) {
+            goto Error;
+        }
     }
 
     s = PyObject_Repr(frac->denominator);
     ON_NULL_GOTO_ERROR(s);
     if (_PyUnicodeWriter_WriteStr(&writer, s) < 0) {
-        Py_DECREF(s);
         goto Error;
     }
     Py_DECREF(s);
+    s = NULL;
+
+    if (TO_STRING_METHOD_REPR == method) {
+        if (_PyUnicodeWriter_WriteChar(&writer, ')') < 0) {
+            goto Error;
+        }
+    }
 
     return _PyUnicodeWriter_Finish(&writer);
 Error:
+    Py_XDECREF(s);
     _PyUnicodeWriter_Dealloc(&writer);
     return NULL;
 }
 
-// TODO: method table
-static PyMethodDef frac_methods[] = {
-    {"new", frac_new, METH_VARARGS, frac_new_doc},
-    {NULL,              NULL}           /* sentinel */
-};
+static PyObject *FracObject_repr(PyObject *inp) {
+    return FracObject_to_string(inp, TO_STRING_METHOD_REPR);
+}
+static PyObject *FracObject_str(PyObject *inp) {
+    return FracObject_to_string(inp, TO_STRING_METHOD_STR);
+}
+
+/* Mathematical Operations */
+void binop_type_error(PyObject *v, PyObject *w, const char *op_name)
+{
+    PyErr_Format(PyExc_TypeError,
+                 "unsupported operand type(s) for %.100s: "
+                 "'%.100s' and '%.100s'",
+                 op_name,
+                 Py_TYPE(v)->tp_name,
+                 Py_TYPE(w)->tp_name);
+}
+
+/*** Frac-Frac operations ***/
+static FracObject *FracObject_frac_frac_add(FracObject *self, FracObject *other) {
+    FracObject *result = NULL;
+    PyObject *n1 = NULL;
+    PyObject *n2 = NULL;
+    PyObject *numerator = NULL;
+    PyObject *denominator = NULL;
+
+    n1 = PyNumber_Multiply(self->numerator, other->denominator);
+    ON_NULL_GOTO_ERROR(n1);
+    n2 = PyNumber_Multiply(other->numerator, self->denominator);
+    ON_NULL_GOTO_ERROR(n2);
+    denominator = PyNumber_Multiply(self->denominator, other->denominator);
+    ON_NULL_GOTO_ERROR(denominator);
+    numerator = PyNumber_Add(n1, n2);
+    ON_NULL_GOTO_ERROR(numerator);
+    result = newFracObject(Py_TYPE(self), numerator, denominator);
+    ON_NULL_GOTO_ERROR(result);
+
+    return result;
+Error:
+    Py_XDECREF(n1);
+    Py_XDECREF(n2);
+    Py_XDECREF(numerator);
+    Py_XDECREF(denominator);
+    return NULL;
+}
+
+static FracObject *FracObject_frac_frac_multiply(FracObject *self, FracObject *other) {
+    FracObject *result = NULL;
+    PyObject *numerator = NULL;
+    PyObject *denominator = NULL;
+
+    numerator = PyNumber_Multiply(self->numerator, other->numerator);
+    ON_NULL_GOTO_ERROR(numerator);
+    denominator = PyNumber_Multiply(self->denominator, other->denominator);
+    ON_NULL_GOTO_ERROR(denominator);
+    result = newFracObject(Py_TYPE(self), numerator, denominator);
+    ON_NULL_GOTO_ERROR(result);
+
+    return result;
+Error:
+    Py_XDECREF(numerator);
+    Py_XDECREF(denominator);
+    return NULL;
+}
+
+/*** Frac-Long operations ***/
+static FracObject *FracObject_frac_long_add(FracObject *self, PyObject *other) {
+    FracObject *result = NULL;
+    PyObject *numerator = NULL;
+    PyObject *denominator = NULL;
+    PyObject *n2 = NULL;
+    // TODO: TODO
+
+    // numerator = PyNumber_Multiply(self->numerator, other);
+    // ON_NULL_GOTO_ERROR(numerator);
+    // denominator = Py_NewRef(self->denominator);
+    // ON_NULL_GOTO_ERROR(denominator);
+    // result = newFracObject(Py_TYPE(self), numerator, denominator);
+    // ON_NULL_GOTO_ERROR(result);
+
+    return result;
+Error:
+    Py_XDECREF(numerator);
+    Py_XDECREF(denominator);
+    return NULL;
+}
+
+static FracObject *FracObject_frac_long_multiply(FracObject *self, PyObject *other) {
+    FracObject *result = NULL;
+    PyObject *numerator = NULL;
+    PyObject *denominator = NULL;
+
+    numerator = PyNumber_Multiply(self->numerator, other);
+    ON_NULL_GOTO_ERROR(numerator);
+    denominator = Py_NewRef(self->denominator);
+    ON_NULL_GOTO_ERROR(denominator);
+    result = newFracObject(Py_TYPE(self), numerator, denominator);
+    ON_NULL_GOTO_ERROR(result);
+
+    return result;
+Error:
+    Py_XDECREF(numerator);
+    Py_XDECREF(denominator);
+    return NULL;
+}
+
+/*** Slot Math Functions ***/
+static FracObject *FracObject_add(FracObject *self, PyObject *other) {
+    if (FracObject_Check(other, self)) {
+        return FracObject_frac_frac_add(self, (FracObject *)other);
+    }
+    else if (PyLong_Check(other)) {
+        return FracObject_frac_long_add(self, other);
+    }
+    else {
+        binop_type_error((PyObject *)self, other, "+");
+        return NULL;
+    }
+}
+
+static FracObject *FracObject_multiply(FracObject *self, PyObject *other) {
+    if (FracObject_Check(other, self)) {
+        return FracObject_frac_frac_multiply(self, (FracObject *)other);
+    }
+    else if (PyLong_Check(other)) {
+        return FracObject_frac_long_multiply(self, other);
+    }
+    else {
+        binop_type_error((PyObject *)self, other, "*");
+        return NULL;
+    }
+}
 
 PyDoc_STRVAR(Frac_doc,
              "A class that stores a number as a fraction of two integers A/B");
@@ -248,7 +403,14 @@ static PyType_Slot Frac_Type_slots[] = {
     {Py_tp_clear, FracObject_clear},
     {Py_tp_finalize, FracObject_finalize},
     {Py_tp_dealloc, FracObject_dealloc},
-    {Py_tp_repr, FracObject_to_string},
+    {Py_tp_repr, FracObject_repr},
+    {Py_tp_str, FracObject_str},
+
+    /* Mathematical Methods */
+    {Py_nb_add, FracObject_add},
+    // {Py_nb_subtract, },
+    {Py_nb_multiply, FracObject_multiply},
+    // {Py_nb_divmod, },
 
     // {Py_tp_methods, Frac_methods},
 
@@ -279,6 +441,12 @@ static int frac_exec(PyObject *m) {
     return 0;
 }
 
+// TODO: method table
+static PyMethodDef frac_module_methods[] = {
+    {"new", frac_new, METH_VARARGS, frac_new_doc},
+    {NULL,              NULL}           /* sentinel */
+};
+
 static struct PyModuleDef_Slot frac_slots[] = {
     {Py_mod_exec, frac_exec},
     // TODO: what are these?
@@ -296,7 +464,7 @@ static struct PyModuleDef frac_module = {
     "frac",
     module_doc,
     0,
-    frac_methods,
+    frac_module_methods,
     frac_slots,
     NULL, // TODO: traverse?
     NULL, // TODO: clear
